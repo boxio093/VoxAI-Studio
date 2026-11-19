@@ -99,7 +99,7 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
         setAudioBlob(wav);
         setAudioUrl(url);
         setMeta(response);
-        const saved: SavedAudio = { id: crypto.randomUUID(), title: content.trim().replace(/\\s+/g, ' ').slice(0, 48) || 'Untitled audio', voice: selectedVoice, model: response.model_used || activeTtsModel, createdAt: Date.now(), duration: response.duration_seconds || 0, blob: wav };
+        const saved: SavedAudio = { id: crypto.randomUUID(), title: content.trim().replace(/\s+/g, ' ').slice(0, 48) || 'Untitled audio', voice: selectedVoice, model: response.model_used || activeTtsModel, createdAt: Date.now(), duration: response.duration_seconds || 0, blob: wav };
         try { await librarySave(saved); setSavedAudios(prev => [saved, ...prev]); setLibraryNotice('Audio automatically saved to your local library.'); } catch { setLibraryNotice('Audio generated, but automatic local saving failed. Download the WAV to keep it.'); }
       }
     } catch (err) {
@@ -112,7 +112,7 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
 
   const deleteSavedAudio = async (id: string) => { try { await libraryDelete(id); setSavedAudios(prev => prev.filter(item => item.id !== id)); setLibraryNotice('Saved audio removed from this browser.'); } catch { setLibraryNotice('Unable to delete this saved audio.'); } };
   const renameSavedAudio = async (item: SavedAudio) => { const title=renameValue.trim(); if(!title) return; const updated={...item,title}; try { await librarySave(updated); setSavedAudios(prev=>prev.map(x=>x.id===item.id?updated:x)); setRenamingId(null); setLibraryNotice('Audio renamed.'); } catch { setLibraryNotice('Unable to rename this audio.'); } };
-  const downloadSavedAudio = (item: SavedAudio) => { const url=URL.createObjectURL(item.blob); const a=document.createElement('a'); a.href=url; a.download=(item.title.replace(/[^a-z0-9-_ ]/gi,'').trim().replace(/\\s+/g,'_')||'voxai_audio')+'.wav'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1500); };
+  const downloadSavedAudio = (item: SavedAudio) => { const url=URL.createObjectURL(item.blob); const a=document.createElement('a'); a.href=url; a.download=(item.title.replace(/[^a-z0-9-_ ]/gi,'').trim().replace(/\s+/g,'_')||'voxai_audio')+'.wav'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1500); };
   const filteredLibrary = savedAudios.filter(item => item.title.toLowerCase().includes(librarySearch.toLowerCase()) || item.voice.toLowerCase().includes(librarySearch.toLowerCase()));
 
   const toggleFavorite = (id: string) => setFavorites(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
