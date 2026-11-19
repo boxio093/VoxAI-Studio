@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AudioLines, Download, Heart, Loader2, Play, Search, Sparkles, Volume2, WandSparkles, Library, Trash2, Pencil, Check } from 'lucide-react';
+import { AudioLines, Download, Heart, Loader2, Play, Search, Sparkles, Volume2, WandSparkles, Library, Trash2, Pencil, Check, Mic, FileAudio, Plus, X } from 'lucide-react';
 import { ModelInfo, TTSResponse, TTSVoiceInfo } from '../types';
 import { fetchTTSVoices, synthesizeTTS } from '../utils/api';
 import { pcmToWavBlob } from '../utils/audio';
@@ -12,6 +12,13 @@ interface TTSViewProps {
 
 const PREVIEW_TEXT = 'Hello there. This is a voice preview from VoxAI Studio.';
 interface SavedAudio { id: string; title: string; voice: string; model: string; createdAt: number; duration: number; blob: Blob; }
+interface VoiceProfile { id: string; name: string; notes: string; filename: string; createdAt: number; sample: Blob; }
+const VOICE_DB = 'voxai_voice_profiles'; const VOICE_STORE = 'profiles';
+const openVoiceDb = (): Promise<IDBDatabase> => new Promise((resolve,reject)=>{const req=indexedDB.open(VOICE_DB,1);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(VOICE_STORE))db.createObjectStore(VOICE_STORE,{keyPath:'id'});};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error||new Error('Could not open voice profile storage'));});
+const loadVoiceProfiles = async (): Promise<VoiceProfile[]> => {const db=await openVoiceDb();return new Promise((resolve,reject)=>{const req=db.transaction(VOICE_STORE,'readonly').objectStore(VOICE_STORE).getAll();req.onerror=()=>{db.close();reject(req.error);};req.onsuccess=()=>{db.close();resolve((req.result as VoiceProfile[]).sort((a,b)=>b.createdAt-a.createdAt);};});};
+const saveVoiceProfile = async (profile: VoiceProfile) => {const db=await openVoiceDb();await new Promise<void>((resolve,reject)=>{const req=db.transaction(VOICE_STORE,'readwrite').objectStore(VOICE_STORE).put(profile);req.onsuccess=()=>resolve();req.onerror=()=>reject(req.error);});db.close();};
+const removeVoiceProfile = async (id:string)=>{const db=await openVoiceDb();await new Promise<void>((resolve,reject)=>{const req=db.transaction(VOICE_STORE,'readwrite').objectStore(VOICE_STORE).delete(id);req.onsuccess=()=>resolve();req.onerror=()=>reject(req.error);});db.close();};
+
 const LIBRARY_DB = 'voxai_audio_library'; const LIBRARY_STORE = 'audio';
 const openLibrary = (): Promise<IDBDatabase> => new Promise((resolve, reject) => { const req = indexedDB.open(LIBRARY_DB, 1); req.onupgradeneeded = () => { const db=req.result; if(!db.objectStoreNames.contains(LIBRARY_STORE)) db.createObjectStore(LIBRARY_STORE,{keyPath:'id'}); }; req.onsuccess=()=>resolve(req.result); req.onerror=()=>reject(req.error||new Error('Could not open local audio library')); });
 const libraryAll = async (): Promise<SavedAudio[]> => { const db=await openLibrary(); return new Promise((resolve,reject)=>{ const req=db.transaction(LIBRARY_STORE,'readonly').objectStore(LIBRARY_STORE).getAll(); req.onerror=()=>{db.close();reject(req.error);}; req.onsuccess=()=>{db.close();resolve((req.result as SavedAudio[]).sort((a,b)=>b.createdAt-a.createdAt));}; }); };
@@ -44,6 +51,13 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [libraryNotice, setLibraryNotice] = useState('');
+  const [voiceProfiles, setVoiceProfiles] = useState<VoiceProfile[]>([]);
+  const [voiceSampleUrls, setVoiceSampleUrls] = useState<Record<string,string>>({});
+  const [profileName, setProfileName] = useState('');
+  const [profileNotes, setProfileNotes] = useState('');
+  const [profileSample, setProfileSample] = useState<File | null>(null);
+  const [profileNotice, setProfileNotice] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
@@ -51,6 +65,8 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
 
   useEffect(() => { if (initialText) setText(initialText); }, [initialText]);
   useEffect(() => { libraryAll().then(setSavedAudios).catch(() => setLibraryNotice('Local library is unavailable in this browser.')); }, []);
+  useEffect(() => { loadVoiceProfiles().then(setVoiceProfiles).catch(()=>setProfileNotice('Voice profile storage could not be opened in this browser.')); }, []);
+  useEffect(() => { const urls:Record<string,string>={}; voiceProfiles.forEach(profile=>{urls[profile.id]=URL.createObjectURL(profile.sample);}); setVoiceSampleUrls(urls); return ()=>Object.values(urls).forEach(URL.revokeObjectURL); }, [voiceProfiles]);
   useEffect(() => { const next: Record<string,string> = {}; savedAudios.forEach(item => { next[item.id] = URL.createObjectURL(item.blob); }); setLibraryUrls(next); return () => Object.values(next).forEach(url => URL.revokeObjectURL(url)); }, [savedAudios]);
   useEffect(() => {
     try { localStorage.setItem('voxai_tts_favorites', JSON.stringify(favorites)); } catch {}
@@ -109,6 +125,10 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
     }
   };
 
+
+
+  const createVoiceProfile = async () => { if(!profileName.trim() || !profileSample) { setProfileNotice('Add a profile name and an audio sample first.'); return; } if(profileSample.size > 20*1024*1024) { setProfileNotice('Sample audio must be 20 MB or smaller.'); return; } if(!profileSample.type.startsWith('audio/')) { setProfileNotice('Choose a supported audio file.'); return; } setSavingProfile(true); try { const profile:VoiceProfile={id:crypto.randomUUID(),name:profileName.trim(),notes:profileNotes.trim(),filename:profileSample.name,createdAt:Date.now(),sample:profileSample}; await saveVoiceProfile(profile); setVoiceProfiles(prev=>[profile,...prev]); setProfileName('');setProfileNotes('');setProfileSample(null);setProfileNotice('Voice profile saved locally. This is a reference profile; cloning is not enabled by the current TTS engine.'); } catch {setProfileNotice('Could not save profile. Browser storage may be full.');} finally{setSavingProfile(false);} };
+  const deleteVoiceProfile = async (id:string) => { try{await removeVoiceProfile(id);setVoiceProfiles(prev=>prev.filter(p=>p.id!==id));setProfileNotice('Voice profile deleted.');}catch{setProfileNotice('Could not delete profile.');} };
 
   const deleteSavedAudio = async (id: string) => { try { await libraryDelete(id); setSavedAudios(prev => prev.filter(item => item.id !== id)); setLibraryNotice('Saved audio removed from this browser.'); } catch { setLibraryNotice('Unable to delete this saved audio.'); } };
   const renameSavedAudio = async (item: SavedAudio) => { const title=renameValue.trim(); if(!title) return; const updated={...item,title}; try { await librarySave(updated); setSavedAudios(prev=>prev.map(x=>x.id===item.id?updated:x)); setRenamingId(null); setLibraryNotice('Audio renamed.'); } catch { setLibraryNotice('Unable to rename this audio.'); } };
