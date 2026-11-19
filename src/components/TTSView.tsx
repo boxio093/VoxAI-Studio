@@ -28,16 +28,19 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [meta, setMeta] = useState<TTSResponse | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
+  const previewBlobUrlRef = useRef<string | null>(null);
 
   useEffect(() => { if (initialText) setText(initialText); }, [initialText]);
   useEffect(() => {
     try { localStorage.setItem('voxai_tts_favorites', JSON.stringify(favorites)); } catch {}
   }, [favorites]);
-  useEffect(() => () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current); }, []);
+  useEffect(() => () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current); if (previewBlobUrlRef.current) URL.revokeObjectURL(previewBlobUrlRef.current); }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,12 +73,18 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
       const response = await synthesizeTTS({ text: content, voice: selectedVoice, speed, model: activeTtsModel });
       const wav = pcmToWavBlob(response.audio_base64, response.sample_rate || 24000);
       const url = URL.createObjectURL(wav);
-      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-      blobUrlRef.current = url;
-      setAudioBlob(wav);
-      setAudioUrl(url);
-      setMeta(response);
-      if (preview) setTimeout(() => audioRef.current?.play().catch(() => {}), 80);
+      if (preview) {
+        if (previewBlobUrlRef.current) URL.revokeObjectURL(previewBlobUrlRef.current);
+        previewBlobUrlRef.current = url;
+        setPreviewUrl(url);
+        setTimeout(() => previewAudioRef.current?.play().catch(() => {}), 80);
+      } else {
+        if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = url;
+        setAudioBlob(wav);
+        setAudioUrl(url);
+        setMeta(response);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Speech synthesis failed.');
     } finally {
@@ -173,6 +182,7 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
             <button type="button" onClick={() => synthesize(PREVIEW_TEXT, true)} disabled={isPreviewing || !selectedVoice || isLoadingVoices} className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400 disabled:opacity-50">
               {isPreviewing ? <Loader2 size={14} className="animate-spin"/> : <Play size={14}/>} Preview selected voice
             </button>
+            {previewUrl && <audio ref={previewAudioRef} src={previewUrl} controls className="mt-3 w-full" aria-label="Voice preview audio player"/>
           </div>
         </aside>
       </div>
