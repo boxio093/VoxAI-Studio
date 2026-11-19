@@ -1,0 +1,8 @@
+{
+  "name": "VoxAI Studio",
+  "description": "Open-model voice intelligence studio powered by Faster-Whisper speech recognition and Kokoro neural speech synthesis.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
