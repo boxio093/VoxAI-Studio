@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AudioLines, Download, Heart, Loader2, Play, Search, Sparkles, Volume2, WandSparkles } from 'lucide-react';
+import { AudioLines, Download, Heart, Loader2, Play, Search, Sparkles, Volume2, WandSparkles, Library, Trash2, Pencil, Check } from 'lucide-react';
 import { ModelInfo, TTSResponse, TTSVoiceInfo } from '../types';
 import { fetchTTSVoices, synthesizeTTS } from '../utils/api';
 import { pcmToWavBlob } from '../utils/audio';
@@ -11,6 +11,13 @@ interface TTSViewProps {
 }
 
 const PREVIEW_TEXT = 'Hello there. This is a voice preview from VoxAI Studio.';
+interface SavedAudio { id: string; title: string; voice: string; model: string; createdAt: number; duration: number; blob: Blob; }
+const LIBRARY_DB = 'voxai_audio_library'; const LIBRARY_STORE = 'audio';
+const openLibrary = (): Promise<IDBDatabase> => new Promise((resolve, reject) => { const req = indexedDB.open(LIBRARY_DB, 1); req.onupgradeneeded = () => { const db=req.result; if(!db.objectStoreNames.contains(LIBRARY_STORE)) db.createObjectStore(LIBRARY_STORE,{keyPath:'id'}); }; req.onsuccess=()=>resolve(req.result); req.onerror=()=>reject(req.error||new Error('Could not open local audio library')); });
+const libraryAll = async (): Promise<SavedAudio[]> => { const db=await openLibrary(); return new Promise((resolve,reject)=>{ const req=db.transaction(LIBRARY_STORE,'readonly').objectStore(LIBRARY_STORE).getAll(); req.onerror=()=>{db.close();reject(req.error);}; req.onsuccess=()=>{db.close();resolve((req.result as SavedAudio[]).sort((a,b)=>b.createdAt-a.createdAt));}; }); };
+const librarySave = async (item: SavedAudio) => { const db=await openLibrary(); await new Promise<void>((resolve,reject)=>{const req=db.transaction(LIBRARY_STORE,'readwrite').objectStore(LIBRARY_STORE).put(item);req.onsuccess=()=>resolve();req.onerror=()=>reject(req.error);});db.close();};
+const libraryDelete = async (id: string) => { const db=await openLibrary(); await new Promise<void>((resolve,reject)=>{const req=db.transaction(LIBRARY_STORE,'readwrite').objectStore(LIBRARY_STORE).delete(id);req.onsuccess=()=>resolve();req.onerror=()=>reject(req.error);});db.close();};
+
 
 export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, activeTtsModel }) => {
   const [text, setText] = useState(initialText || '');
@@ -31,12 +38,20 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [meta, setMeta] = useState<TTSResponse | null>(null);
+  const [savedAudios, setSavedAudios] = useState<SavedAudio[]>([]);
+  const [libraryUrls, setLibraryUrls] = useState<Record<string, string>>({});
+  const [librarySearch, setLibrarySearch] = useState('');
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [libraryNotice, setLibraryNotice] = useState('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
 
   useEffect(() => { if (initialText) setText(initialText); }, [initialText]);
+  useEffect(() => { libraryAll().then(setSavedAudios).catch(() => setLibraryNotice('Local library is unavailable in this browser.')); }, []);
+  useEffect(() => { const next: Record<string,string> = {}; savedAudios.forEach(item => { next[item.id] = URL.createObjectURL(item.blob); }); setLibraryUrls(next); return () => Object.values(next).forEach(url => URL.revokeObjectURL(url)); }, [savedAudios]);
   useEffect(() => {
     try { localStorage.setItem('voxai_tts_favorites', JSON.stringify(favorites)); } catch {}
   }, [favorites]);
@@ -84,6 +99,8 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
         setAudioBlob(wav);
         setAudioUrl(url);
         setMeta(response);
+        const saved: SavedAudio = { id: crypto.randomUUID(), title: content.trim().replace(/\s+/g, ' ').slice(0, 48) || 'Untitled audio', voice: selectedVoice, model: response.model_used || activeTtsModel, createdAt: Date.now(), duration: response.duration_seconds || 0, blob: wav };
+        try { await librarySave(saved); setSavedAudios(prev => [saved, ...prev]); setLibraryNotice('Audio automatically saved to your local library.'); } catch { setLibraryNotice('Audio generated, but automatic local saving failed. Download the WAV to keep it.'); }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Speech synthesis failed.');
@@ -91,6 +108,12 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
       preview ? setIsPreviewing(false) : setIsGenerating(false);
     }
   };
+
+
+  const deleteSavedAudio = async (id: string) => { try { await libraryDelete(id); setSavedAudios(prev => prev.filter(item => item.id !== id)); setLibraryNotice('Saved audio removed from this browser.'); } catch { setLibraryNotice('Unable to delete this saved audio.'); } };
+  const renameSavedAudio = async (item: SavedAudio) => { const title=renameValue.trim(); if(!title) return; const updated={...item,title}; try { await librarySave(updated); setSavedAudios(prev=>prev.map(x=>x.id===item.id?updated:x)); setRenamingId(null); setLibraryNotice('Audio renamed.'); } catch { setLibraryNotice('Unable to rename this audio.'); } };
+  const downloadSavedAudio = (item: SavedAudio) => { const url=URL.createObjectURL(item.blob); const a=document.createElement('a'); a.href=url; a.download=(item.title.replace(/[^a-z0-9-_ ]/gi,'').trim().replace(/\s+/g,'_')||'voxai_audio')+'.wav'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1500); };
+  const filteredLibrary = savedAudios.filter(item => item.title.toLowerCase().includes(librarySearch.toLowerCase()) || item.voice.toLowerCase().includes(librarySearch.toLowerCase()));
 
   const toggleFavorite = (id: string) => setFavorites(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const downloadAudio = () => {
@@ -195,6 +218,13 @@ export const TTSView: React.FC<TTSViewProps> = ({ initialText = '', ttsModels, a
         </div>
         <audio ref={audioRef} src={audioUrl} controls className="w-full"/>
       </section>}
+
+      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-sm space-y-4">
+        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3"><div><h2 className="flex items-center gap-2 font-semibold text-slate-900 dark:text-white"><Library size={17}/> Local Audio Library</h2><p className="mt-1 text-xs text-slate-500">Generated audio is saved in this browser for playback and offline WAV downloads.</p></div><span className="rounded-full bg-slate-100 dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300">{savedAudios.length} saved</span></header>
+        <input value={librarySearch} onChange={e=>setLibrarySearch(e.target.value)} placeholder="Search saved audio by title or voice…" className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/60"/>
+        {libraryNotice && <p className="text-xs text-slate-500" role="status">{libraryNotice}</p>}
+        {filteredLibrary.length===0 ? <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 py-8 text-center text-sm text-slate-500">{savedAudios.length===0 ? 'Your library is empty. Generate speech to automatically save it here.' : 'No saved audio matches that search.'}</div> : <div className="space-y-3">{filteredLibrary.map(item=><article key={item.id} className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 sm:p-4 flex flex-col gap-3"><div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2"><div className="min-w-0 flex-1">{renamingId===item.id ? <div className="flex gap-2"><input autoFocus value={renameValue} onChange={e=>setRenameValue(e.target.value)} className="flex-1 rounded-md border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1 text-sm"/><button onClick={()=>renameSavedAudio(item)} aria-label="Save title" className="text-emerald-600 p-1"><Check size={16}/></button></div> : <><h3 className="font-medium text-sm text-slate-900 dark:text-white truncate">{item.title}</h3><p className="text-xs text-slate-500 mt-1">{item.voice} · {item.model} · {new Date(item.createdAt).toLocaleString()} · {item.duration ? item.duration.toFixed(1)+'s' : 'WAV'}</p></>}</div><div className="flex items-center gap-1 self-end sm:self-auto"><button onClick={()=>{setRenamingId(item.id);setRenameValue(item.title);}} title="Rename" className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"><Pencil size={15}/></button><button onClick={()=>downloadSavedAudio(item)} title="Download WAV" className="p-2 rounded-lg text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30"><Download size={15}/></button><button onClick={()=>deleteSavedAudio(item.id)} title="Delete" className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"><Trash2 size={15}/></button></div></div><audio controls preload="none" src={libraryUrls[item.id]} className="w-full"/></article>)}</div>}
+      </section>
     </div>
   );
 };
